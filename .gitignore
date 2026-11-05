@@ -1,0 +1,16 @@
+# Secrets
+.env
+.streamlit/secrets.toml
+
+# Kuku's screenplays are confidential: never commit them
+*.txt
+!requirements.txt
+input/
+data/
+
+# Generated
+outputs/
+.cache/
+__pycache__/
+*.pyc
+.venv/
