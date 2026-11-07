@@ -39,15 +39,15 @@ python app.py                     # open http://localhost:5000
 
 1. Push this repo to GitHub. `.gitignore` keeps the screenplays, outputs and `.env` out.
 2. On vercel.com, sign in with GitHub. Click **Add New → Project**, import the repo and click **Deploy**. No build settings are needed: Vercel finds the Flask app in `app.py`, and serves `public/` as the page.
-3. Optional, so people can run it on your key: in **Settings → Environment Variables**, add the variables below, then redeploy.
+3. To let people run it on your key: in **Settings → Environment Variables**, add these (or paste your `.env` file), then redeploy.
 
    | Variable | Value |
    |---|---|
    | `OPENAI_API_KEY` | your key |
+   | `LLM_PROVIDER` | `openai` |
    | `LLM_MODEL` | `gpt-4.1` |
-   | `ACCESS_CODE` | a code you choose |
 
-   Visitors then type the code to use your key. Without `ACCESS_CODE`, your key is never used, and visitors paste their own key, which is sent with each request and never stored.
+   Anyone with the link can then run it on your key, so set a monthly budget on the key in your OpenAI account. To limit your key to people you give a code to, also add `ACCESS_CODE`. Without any key on the server, visitors paste their own, which is sent with each request and never stored.
 
 Kuku's screenplays are confidential, so the site ships with no show content and stores nothing. Each step is a short request (one per episode, one per clip), well inside Vercel's function time limit.
 

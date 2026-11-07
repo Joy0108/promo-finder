@@ -79,5 +79,5 @@ def static_files(name: str):
 if __name__ == "__main__":
     import os
 
-    os.environ["PROMO_LOCAL"] = "1"  # your own machine: the key in .env works without an access code
+    os.environ["PROMO_LOCAL"] = "1"  # your own machine: answers are cached in .cache/
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)

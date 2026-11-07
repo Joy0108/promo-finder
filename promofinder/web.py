@@ -7,10 +7,10 @@ function's time limit, and the page can show real progress. Nothing is stored
 on the server: every request carries what it needs, and code steps are
 recomputed deterministically.
 
-Keys: a visitor can paste their own API key (sent with each request, used for
-that request only, never stored). The site owner's key, set as an environment
-variable, is used only with the right ACCESS_CODE, so a public link cannot
-spend it.
+Keys: the site owner's key, set as an environment variable, runs every request
+by default. Set ACCESS_CODE as well to limit that key to people who type the
+code. A visitor can also paste their own API key instead (sent with each
+request, used for that request only, never stored).
 """
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ MAX_CHARS = 4_000_000
 
 
 def hosted() -> bool:
-    """Treat every deployment as public. Only `python app.py` on your own machine
-    sets PROMO_LOCAL=1, which lets the server's key work without an access code."""
+    """Treat every deployment as a server: no disk cache, only hosted providers.
+    `python app.py` on your own machine sets PROMO_LOCAL=1."""
     return os.getenv("PROMO_LOCAL") != "1"
 
 
@@ -56,7 +56,7 @@ def config() -> dict:
     cfg = LLMConfig.from_env()
     code = os.getenv("ACCESS_CODE", "")
     has_key = bool(cfg.api_key) and cfg.provider in WEB_PROVIDERS
-    return {"server_key": has_key and (bool(code) or not hosted()), "code_required": bool(code),
+    return {"server_key": has_key, "code_required": bool(code),
             "provider": cfg.provider, "model": cfg.model, "providers": WEB_PROVIDERS, "hosted": hosted()}
 
 
@@ -74,12 +74,9 @@ def make_llm(headers, long_call: bool = False) -> LLM:
         cfg = LLMConfig(provider=provider, model=model or "gpt-4.1", api_key=user_key,
                         base_url=PROVIDERS[provider]["base_url"])
     else:
-        code = os.getenv("ACCESS_CODE", "")
-        if code:
-            if not hmac.compare_digest(code.encode(), (headers.get("X-Access-Code") or "").strip().encode()):
-                raise AuthError("That access code isn't right. Check it, or use your own API key.")
-        elif hosted():
-            raise AuthError("This site has no shared key. Add your own API key in Settings.")
+        code = os.getenv("ACCESS_CODE", "")  # optional: limits the site's key to people with the code
+        if code and not hmac.compare_digest(code.encode(), (headers.get("X-Access-Code") or "").strip().encode()):
+            raise AuthError("That access code isn't right. Check it, or use your own API key.")
         cfg = LLMConfig.from_env(provider, model)
         if not cfg.api_key:
             raise AuthError(f"The server has no key for {cfg.provider}. Add your own API key in Settings.")
