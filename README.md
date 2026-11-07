@@ -12,6 +12,8 @@ Built for the Kuku AI Generalist assignment, Problem 1. On the 50-episode input 
 
 ## Use it in the browser
 
+**Live app: [promo-finder-two.vercel.app](https://promo-finder-two.vercel.app/)**
+
 The web app (`app.py` plus `public/`) runs the whole thing online. To use it:
 
 1. Upload the show's `.zip`.
