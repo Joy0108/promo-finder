@@ -1,7 +1,7 @@
 """All prompts in one place, versioned. Changing a prompt changes PROMPT_VERSION,
 which is written into every run log so results stay comparable."""
 
-PROMPT_VERSION = "v1.3"
+PROMPT_VERSION = "v1.4"
 
 TYPES = ("betrayal, humiliation, identity_reveal, threat, violence, injustice, romance, "
          "defiance, mystery, rescue, power_reversal, other")
@@ -90,6 +90,21 @@ Return JSON only:
 hook_score: would the first 3 seconds stop your scroll? cliffhanger_score: how badly do you need to know what happens next? standalone_score: 10 = completely clear with zero context, 1 = lost.
 
 For "why_it_works": name the specific hook you saw and the specific question it leaves you with (e.g. "Her sister steals her groom at the altar, then cuts before her father answers her plea."). Do not use generic words like intense, gripping, dramatic, high stakes or compelling. If the clip does not work, say the main reason."""
+
+# The cold-viewer panel: three different strangers judge every clip, and the
+# scores are averaged. One judge's mood can move a clip ten places; three
+# rarely agree on a fluke. Viewer 1 is the original prompt, unchanged.
+_OPENER = "You are 28, scrolling TikTok. You have NEVER heard of this show."
+assert CRITIC_SYSTEM.startswith(_OPENER)
+CRITIC_PANEL = [
+    ("Scroller, 28 (TikTok)", CRITIC_SYSTEM),
+    ("Genre fan, 45 (Facebook Reels)", CRITIC_SYSTEM.replace(_OPENER,
+        "You are 45 and you watch short drama apps on your phone most evenings. You have seen hundreds of these "
+        "romance-and-revenge stories, so familiar twists do not impress you. You have NEVER heard of this show.", 1)),
+    ("Impatient, 19 (YouTube Shorts)", CRITIC_SYSTEM.replace(_OPENER,
+        "You are 19, flicking through YouTube Shorts. You give a video about two seconds before you swipe, and you "
+        "have no patience for slow set-up or long speeches. You have NEVER heard of this show.", 1)),
+]
 
 # --------------------------------------------------------------------------- 5
 PLAN_SYSTEM = """You are head of growth at a microdrama app. Below are the top promo clips for one show, already in posting order (ranked by score). For each clip, write one crisp line on why it is posted at that point: the job it does (introduce the premise to a cold audience, test a different hook type, retarget engaged viewers with a bigger reveal, and so on).

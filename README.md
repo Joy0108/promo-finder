@@ -1,83 +1,141 @@
 # Promo Finder
 
-Reads a microdrama's episode screenplays and returns **ranked, ready-to-cut promo clips** (20–60s). For each one it gives the exact segments (episode + start/end), the hook in the first 3 seconds, the cliffhanger it cuts on, why it works, and where to post it in the order.
+Reads a microdrama's episode screenplays and returns **ranked, ready-to-cut promo clips** (20 to 60 seconds). Each one comes with:
 
-Built for the Kuku AI Generalist assignment, Problem 1. On the 50-episode input pack (103 minutes of show), one run takes about a minute and costs about $0.80 with `gpt-4.1`.
+- the exact segments (episode plus start and end time);
+- the hook in the first 3 seconds and the cliffhanger it cuts on;
+- why it works, and when to post it.
 
-## Quick start
+It also gives an EDL cut list that opens in Premiere or Resolve with every promo already cut.
+
+Built for the Kuku AI Generalist assignment, Problem 1. On the 50-episode input pack (103 minutes of show), one run takes about a minute or two.
+
+## Use it in the browser
+
+The web app (`app.py` plus `public/`) runs the whole thing online. To use it:
+
+1. Upload the show's `.zip`.
+2. Watch each step run, with live progress.
+3. Review the results across six tabs:
+   - **Ranked promos**: each one with the scores explained, three cold viewers' verdicts and the script.
+   - **Baseline vs Promo Finder**: the "one big prompt" shortcut, with its exact prompt and every one of its failures.
+   - **Show map**, **Quality checks** and **How it works**.
+   - **Downloads**.
+4. Mark each promo Use, Maybe or Reject.
+
+A finished run can be saved as a results file and opened again later with no model calls. The command line writes the same file (`results.json`).
+
+Run it on your own machine:
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 copy .env.example .env            # then put your API key in .env
-
-python run.py "path/to/show folder"            # writes outputs/<show>__<model>/
-streamlit run app.py                           # editor app: browse results or run a new show
+python app.py                     # open http://localhost:5000
 ```
 
-The show folder holds one `.txt` screenplay per episode, in Kuku's export format. Check that a new show parses cleanly without spending anything:
+### Deploy it (Vercel, free)
+
+1. Push this repo to GitHub. `.gitignore` keeps the screenplays, outputs and `.env` out.
+2. On vercel.com, sign in with GitHub. Click **Add New → Project**, import the repo and click **Deploy**. No build settings are needed: Vercel finds the Flask app in `app.py`, and serves `public/` as the page.
+3. Optional, so people can run it on your key: in **Settings → Environment Variables**, add the variables below, then redeploy.
+
+   | Variable | Value |
+   |---|---|
+   | `OPENAI_API_KEY` | your key |
+   | `LLM_MODEL` | `gpt-4.1` |
+   | `ACCESS_CODE` | a code you choose |
+
+   Visitors then type the code to use your key. Without `ACCESS_CODE`, your key is never used, and visitors paste their own key, which is sent with each request and never stored.
+
+Kuku's screenplays are confidential, so the site ships with no show content and stores nothing. Each step is a short request (one per episode, one per clip), well inside Vercel's function time limit.
+
+## Command line
 
 ```bash
-python run.py "path/to/show folder" --parse-only
+python run.py "path/to/show folder"                 # writes outputs/<show>__<model>/
+python run.py "path/to/show folder" --parse-only    # check the format, no model calls
+python run.py "path/to/show folder" --episodes 1-10 # quick partial run
+python run.py "path/to/show folder" --judges 1      # one cold viewer per clip instead of three
 ```
 
-## Swap the model
+The show folder holds one `.txt` screenplay per episode, in Kuku's export format.
+
+### Swap the model
 
 Every model call goes through one OpenAI-compatible client, so the model is a setting, not code:
 
 ```bash
 python run.py SHOW --model gpt-4.1-mini                         # OpenAI
-python run.py SHOW --provider gemini --model gemini-2.5-flash   # Google (free tier)
+python run.py SHOW --provider gemini --model gemini-2.5-flash   # Google
 python run.py SHOW --provider groq --model llama-3.3-70b-versatile
 python run.py SHOW --provider anthropic --model <claude-model>
 python run.py SHOW --provider custom --base-url https://... --api-key ... --model ...   # any OpenAI-compatible API
 ```
 
-The same choices are in the app's sidebar. Responses are cached in `.cache/`, so a re-run is free and a crashed run resumes. Add `--offline` to replay a run purely from the cache: it never calls the API, and it refuses rather than spends if something isn't cached.
+The web app has the same choice. Answers are cached in `.cache/` on your machine:
+
+- a re-run makes no new calls;
+- a crashed run resumes where it stopped;
+- `--offline` replays a run purely from the cache, and refuses rather than calling the model if something isn't there.
 
 ## How it works
 
 ```
-screenplays ─► 1 PARSE (code) ───────── every line with its exact start/end time
-            ─► 2 SHOW BIBLE (1 LLM call) premise, the title's promise, one name per character
-            ─► 3 MOMENTS (1 call/episode)  hooks + cliffhangers, by LINE NUMBER only
-            ─► 4 STITCHES (1 call)         hook in one episode + cliffhanger in a later one
-            ─► 5 ASSEMBLE (code)          pairs → clips, cut points snapped to clean edits
-            ─► 6 HARD CHECKS (code)       reject anything that breaks a rule
-            ─► 7 COLD VIEWER (1 call/clip) a model that sees ONLY the clip explains it
-            ─► 8 RANK (code)              score + variety rules → ranked list
-            ─► 9 POSTING NOTES (1 call)    why each top clip is posted where it is
+screenplays ─► 1 PARSE (code) ──────────── every line and shot with its exact start/end time
+            ─► 2 SHOW BIBLE (1 call)        premise, the title's promise, one name per character
+            ─► 3 MOMENTS (1 call/episode)   hooks + cliffhangers, by LINE NUMBER only
+            ─► 4 STITCHES (1 call)          hook in one episode + cliffhanger in a later one
+            ─► 5 ASSEMBLE (code)            pairs → clips, cut points snapped to clean edits
+            ─► 6 NINE HARD CHECKS (code)    reject anything that breaks a rule
+            ─► 7 SHORTLIST (code)           best 40 by a quick code score, with variety
+            ─► 8 COLD-VIEWER PANEL (3 calls/clip)  three strangers who see ONLY the clip
+            ─► 9 RANK (code)                score + variety rules → ranked list
+            ─► 10 POSTING NOTES (1 call)    why each top clip is posted where it is
 ```
 
-**The rule: the model judges drama, code does everything that can be checked.**
+**The rule: the model judges the drama; code does everything that can be checked.**
 
-- The model never writes a timestamp. It picks line numbers, and code reads the times from the script, so a cut point cannot be invented.
-- Hard checks run on every clip:
-  - 20–60s long
-  - the hook lands in the first 3s
-  - it ends on the cliffhanger line, and the answer is not shown
-  - no cut inside a spoken line, or inside a sentence that runs across two lines
-  - every timestamp exists in the script
-  - segments are in story order
-- "Makes sense on its own" is *measured*. A separate model call sees only the clip's text, with no show context and no character names beyond the on-screen labels. It has to say who's who, what the hook is and what's left unresolved, and it scores the clip.
-- The ranking follows the scoring formula in `promofinder/rank.py`, then applies variety rules:
-  - one clip per story moment, including moments an episode replays from the previous one
-  - no overlapping clips
-  - at most two clips per episode
+- **The model never writes a timestamp.** It picks line numbers, and code reads the times from the script, so a cut point cannot be invented.
+- **Cut rules:**
+  - open on the camera cut just before the hook, if the hook still lands within 3 seconds;
+  - never start or end inside a spoken line, and finish sentences that run across two lines;
+  - end on the cliffhanger line, then hold up to 1.5 seconds on a silent reaction shot, never showing the answer;
+  - stitch two pieces when hook to cliffhanger runs past 60 seconds.
+- **Nine hard checks** run on every clip:
+  - 20 to 60 seconds long;
+  - the hook lands in the first 3 seconds;
+  - it ends on the cliffhanger line;
+  - the answer is not shown;
+  - no cut inside a line;
+  - no cut inside a sentence split across lines;
+  - every time is real (it exists in the script);
+  - every piece is inside a real episode;
+  - the pieces are in story order.
+- **"Makes sense on its own" is measured.** Three different cold viewers each see only the clip's text, with no show information:
+  - a 28-year-old scrolling TikTok;
+  - a 45-year-old genre fan;
+  - an impatient 19-year-old.
+
+  Each must explain the clip and score the hook, the cliffhanger and whether it stands alone. Their scores are averaged.
+- **Score** = 0.30 × hook + 0.30 × cliffhanger + 0.25 × stands alone + 0.15 × premise, minus small penalties (`promofinder/rank.py`).
+  - Hook and cliffhanger each average the editor model's score with the viewers' score.
+  - Variety rules then apply: one clip per story moment (including moments an episode replays from the previous one), no overlapping clips, and at most two clips per episode.
 
 ## Outputs (`outputs/<show>__<model>/`)
 
 | File | What it is |
 |---|---|
+| `results.json` | Everything the web app shows; open it there to review the run again |
 | `report.md` | Editor's report: ranked list, posting order and reasons, full details and the script for each clip |
-| `promos_ranked.csv` / `.json` | Every ranked promo: segments, hook, cliffhanger, scores, cold-viewer read |
+| `promos_ranked.csv` / `.json` | Every ranked promo: segments, hook, cliffhanger, scores, the cold viewers' read |
 | `promo_cuts.edl` | Cut list (CMX 3600). Import it into Premiere, Resolve or Avid and relink reel `E031` to episode 31's video; every promo is then pre-cut on the timeline |
 | `quality.md` | Hard-check results, rejections, the writer-intent check, model-vs-viewer disagreements, flags, known limits |
 | `writer_intent_check.json` | Do the cuts land on the moments the screenwriters marked as cliffhangers? |
 | `candidates_all.json` | Every clip assembled, with its checks and why any was rejected |
 | `beats/E###.json` | Raw model output per episode, plus what code repaired or dropped |
-| `bible.json`, `cross_episode_pairs.json`, `posting_plan.json`, `run.json` | Other stage outputs; tokens, cost and settings |
+| `bible.json`, `cross_episode_pairs.json`, `posting_plan.json`, `run.json` | Other stage outputs; settings, call and token counts |
 
 ## Checking quality
 
@@ -92,44 +150,38 @@ python evaluate.py agree outputs/<run-A> outputs/<run-B>
 python evaluate.py gold outputs/<run> gold/gold.json
 ```
 
-Results on the 50-episode pack:
+Results on the 50-episode pack (gpt-4.1):
 
 | Check | Result |
 |---|---|
-| One-prompt baseline (gpt-4.1) | 0 of 20 promos usable as they are: 99s average length, 13 of 20 were an entire episode, 7 of 20 hooked in the first 3s |
-| Promo Finder hard checks | 282 of 289 clips pass all 9; the rest are dropped before an editor sees them |
+| One-prompt baseline | 0 of 20 promos usable as they are: 99s average length, 13 of 20 were an entire episode, 7 of 20 hooked in the first 3s |
+| Promo Finder hard checks | 282 of 289 clips pass all 9; the rest are dropped before an editor sees them. The top 20 average 35s |
 | Writer intent | the cliffhangers land within 4s of 23 of the 24 moments the screenwriters marked |
-| Model agreement | gpt-5-mini and gpt-4.1-mini each independently found 8 of gpt-4.1's top 10 moments |
-| Cold viewer, top 20 | hook 7.2 · cliffhanger 8.1 · stands alone 6.6 out of 10 |
-
-The app also records an editor's Use / Maybe / Reject verdict on each clip (`feedback.json`), so the weights can be tuned against real decisions.
-
-## Deploy (Streamlit Community Cloud, free)
-
-1. Push this folder to a GitHub repo. `.gitignore` keeps the screenplays, outputs and `.env` out.
-2. On share.streamlit.io, create an app from the repo with `app.py` as the main file.
-3. Optional: under *Secrets*, add `OPENAI_API_KEY = "..."` and `APP_PASSWORD = "..."`, so reviewers can run without their own key.
-
-Kuku's screenplays are confidential, so the hosted app ships with no show content. Upload a show's `.txt` files (or a results `.zip`) in the app.
+| Model agreement | among the clips they tested on their own, gpt-4.1-mini found 8 and gpt-5-mini 9 of gpt-4.1's top 10 moments |
+| Cold-viewer panel, top 20 | hook 7.1 · cliffhanger 7.9 · stands alone 6.7 out of 10 |
+| Panel stability | swapping one single viewer for another moves the median clip about 5 places; dropping one viewer from the panel of three moves it 2, and keeps about 8 of the top 10 |
 
 ## Layout
 
 ```
-run.py            CLI
-app.py            Streamlit editor app
-baseline.py       the one-prompt baseline and its checker
+app.py            web app (Flask): the API steps, and the page locally
+public/           the page: index.html, app.js, styles.css
+run.py            command line
+baseline.py       the one-prompt baseline (command line)
 evaluate.py       model agreement; recall against a reference set
 promofinder/
-  parse.py        screenplay parser (no LLM)
-  llm.py          provider-agnostic client, cache, cost tracking
+  parse.py        screenplay parser (no model)
+  llm.py          provider-agnostic client and cache
   prompts.py      every prompt, versioned
   bible.py        show bible + character label merging
   beats.py        per-episode hooks/cliffhangers, checked against the script
   assemble.py     clip assembly and cut-point rules
-  validate.py     hard checks
-  critic.py       cold-viewer test
+  validate.py     the nine hard checks
+  critic.py       the cold-viewer panel
   rank.py         scoring and variety rules
   writer_check.py do cuts land on the writers' own cliffhanger marks?
-  report.py       output files, including the EDL cut list
-  pipeline.py     orchestration
+  report.py       output files, including the EDL cut list and results.json
+  baseline.py     the one-prompt baseline and its checker
+  pipeline.py     the stages, end to end
+  web.py          the same stages as small JSON steps, plus the key rules
 ```

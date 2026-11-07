@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Promo Finder</title>
+<meta name="description" content="Upload a show's episode scripts and get a ranked list of ready-to-cut 20 to 60 second promos, with exact timestamps and a cut list.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
+<script src="app.js" type="module"></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./" id="home-link">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="6" fill="var(--accent)"/>
+        <path d="M12 9H8.5v14H12M20 9h3.5v14H20" fill="none" stroke="var(--accent-ink)" stroke-width="2.4" stroke-linecap="square"/>
+      </svg>
+      <span class="brand-name">Promo Finder</span>
+      <span class="brand-tag">Ready-to-cut promos from a show's scripts</span>
+    </a>
+    <nav aria-label="Main">
+      <button type="button" data-go="method">How it works</button>
+      <button type="button" data-go="home">New run</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap" id="app">
+  <noscript><p>This page needs JavaScript to run.</p></noscript>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Promo Finder: a prototype for Kuku's promo editors.</span>
+    <span>Scripts are sent to the model provider you choose and are not stored by this site.</span>
+  </div>
+</footer>
+</body>
+</html>

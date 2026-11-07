@@ -30,11 +30,12 @@ def main() -> int:
     ap.add_argument("--title", help="show title (default: folder name)")
     ap.add_argument("--episodes", help="range like 1-10 (default: all)")
     ap.add_argument("--critic-k", type=int, default=40, help="clips sent to the cold-viewer test (default 40)")
+    ap.add_argument("--judges", type=int, default=3, help="cold viewers per clip, 1-3; their scores are averaged (default 3)")
     ap.add_argument("--top", type=int, default=20, help="size of the ranked main list (default 20)")
     ap.add_argument("--workers", type=int, default=6, help="parallel LLM calls (default 6)")
     ap.add_argument("--parse-only", action="store_true", help="parse and report the format; no LLM calls")
     ap.add_argument("--offline", action="store_true",
-                    help="replay cached model responses only; never call the API (free re-ranking/re-reporting)")
+                    help="replay cached model responses only; never call the API (re-rank and re-report from saved answers)")
     args = ap.parse_args()
 
     if args.parse_only:
@@ -65,14 +66,15 @@ def main() -> int:
 
     try:
         res = run(args.show_dir, args.out, cfg, title=args.title, critic_k=args.critic_k, top_n=args.top,
-                  workers=args.workers, episodes=ep_range, progress=progress)
+                  workers=args.workers, judges=args.judges, episodes=ep_range,
+                  progress=progress)
     except LLMError as e:
         print(f"\nLLM error: {e}", file=sys.stderr)
         return 2
     r = res["run"]
     print(f"\nDone in {r['seconds']}s: {r['candidates_valid']} valid clips, {r['shortlisted']} cold-viewer tested.")
-    print(f"LLM calls {r['llm_calls']} ({r['cached_calls']} cached) · tokens {r['tokens_in']:,} in / "
-          f"{r['tokens_out']:,} out · cost {r['cost_display']}")
+    print(f"Model calls {r['llm_calls']} ({r['cached_calls']} from cache) · tokens {r['tokens_in']:,} in / "
+          f"{r['tokens_out']:,} out")
     print(f"Outputs: {res['out_dir']}")
     return 0
 

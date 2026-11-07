@@ -186,7 +186,7 @@ def _cand(kind: str, segs: list[dict], h: dict, c: dict, setup_in: bool) -> dict
 
 
 def prescore(h: dict, c: dict, kind: str, setup_in: bool, dur: float) -> float:
-    """Cheap ranking used only to choose which candidates get the (paid) cold-viewer test."""
+    """Quick code-only ranking, used only to choose which candidates go to the cold-viewer test."""
     ctx = {"none": 0.0, "some": 0.3, "heavy": 1.0}
     s = 0.5 * h["score"] + 0.5 * c["score"]
     s += 0.5 if (h["on_premise"] or c["on_premise"]) else 0.0

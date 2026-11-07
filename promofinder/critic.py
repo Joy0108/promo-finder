@@ -1,11 +1,17 @@
-"""Stage 5: the cold-viewer test. A separate call sees ONLY the clip (no show
+"""Stage 5: the cold-viewer test. Separate calls see ONLY the clip (no show
 bible, no episode context, raw on-screen labels) and must explain it. This turns
-'makes sense on its own' from a hope into a measured score."""
+'makes sense on its own' from a hope into a measured score.
+
+A panel of three different strangers judges each clip and their scores are
+averaged, so one judge's whim cannot move a clip up or down the list."""
 from __future__ import annotations
 
 from .llm import LLM
 from .parse import Episode, fmt
-from .prompts import CRITIC_SYSTEM
+from concurrent.futures import ThreadPoolExecutor
+from statistics import mean
+
+from .prompts import CRITIC_PANEL
 
 EPS = 0.05
 
@@ -50,8 +56,8 @@ def render_excerpt(cand: dict, eps: dict[int, Episode]) -> str:
     return "\n".join(out)
 
 
-def cold_view(cand: dict, eps: dict[int, Episode], llm: LLM) -> dict:
-    raw = llm.json(CRITIC_SYSTEM, render_for_viewer(cand, eps), stage="critic", temperature=0.3)
+def one_view(system: str, clip_text: str, llm: LLM) -> dict:
+    raw = llm.json(system, clip_text, stage="critic", temperature=0.3)
 
     def score(key):
         try:
@@ -73,3 +79,37 @@ def cold_view(cand: dict, eps: dict[int, Episode], llm: LLM) -> dict:
         "would_watch_next": bool(raw.get("would_watch_next", False)),
         "why_it_works": str(raw.get("why_it_works", "")),
     }
+
+
+def cold_view(cand: dict, eps: dict[int, Episode], llm: LLM, judges: int = 3) -> dict:
+    """Ask `judges` different cold viewers (1-3) and combine their verdicts."""
+    text = render_for_viewer(cand, eps)
+    panel = CRITIC_PANEL[:max(1, min(judges, len(CRITIC_PANEL)))]
+    with ThreadPoolExecutor(max_workers=len(panel)) as pool:
+        views = list(pool.map(lambda p: one_view(p[1], text, llm), panel))
+    return combine([name for name, _ in panel], views)
+
+
+def combine(names: list[str], views: list[dict]) -> dict:
+    """Scores are the panel's average; 'would watch next' is the majority; the
+    confusing points are those of the median viewer (by how many each listed).
+    The words (what they understood, why it works) are viewer 1's."""
+    first = views[0]
+    if len(views) == 1:
+        return {**first, "panel": [_row(names[0], first)]}
+    by_count = sorted(views, key=lambda v: len(v["confusing"]))
+    return {
+        **first,
+        "hook_score": round(mean(v["hook_score"] for v in views), 2),
+        "cliffhanger_score": round(mean(v["cliffhanger_score"] for v in views), 2),
+        "standalone_score": round(mean(v["standalone_score"] for v in views), 2),
+        "would_watch_next": sum(v["would_watch_next"] for v in views) * 2 > len(views),
+        "confusing": by_count[len(by_count) // 2]["confusing"],
+        "panel": [_row(n, v) for n, v in zip(names, views)],
+    }
+
+
+def _row(name: str, v: dict) -> dict:
+    return {"viewer": name, "hook": v["hook_score"], "cliffhanger": v["cliffhanger_score"],
+            "standalone": v["standalone_score"], "would_watch_next": v["would_watch_next"],
+            "understood": v["what_i_understood"], "confusing": v["confusing"], "why_it_works": v["why_it_works"]}

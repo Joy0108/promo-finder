@@ -84,6 +84,109 @@ def write_outputs(out: Path, ctx: dict) -> None:
     write_edl(out / "promo_cuts.edl", main, ctx["bible"].get("title", ""))
     (out / "report.md").write_text(_report_md(ctx, ranked), encoding="utf-8")
     (out / "quality.md").write_text(_quality_md(ctx, ranked), encoding="utf-8")
+    _dump(out / "results.json", build_results(ctx, ranked, out))
+
+
+DOWNLOADS = ("report.md", "quality.md", "promos_ranked.csv", "promo_cuts.edl")
+
+
+def build_results(ctx: dict, ranked: list[dict], out: Path) -> dict:
+    """Everything the web app shows, in one file. Open it there to review a run
+    again without any model calls (the command line writes the same file)."""
+    bible = ctx["bible"]
+    return {
+        "format": "promo-finder-results/1",
+        "run": ctx["run"],
+        "bible": {k: bible.get(k) for k in ("title", "premise", "title_promise", "characters", "arcs")},
+        "promos": ranked,
+        "plan": ctx["plan"],
+        "writer": ctx["writer"],
+        "quality": quality_summary(ctx, ranked),
+        "map": show_map(ctx),
+        "files": {name: (out / name).read_text(encoding="utf-8-sig") for name in DOWNLOADS},
+    }
+
+
+def show_map(ctx: dict) -> list[dict]:
+    """Per episode: where the hooks, cliffhangers and writers' cliffhanger marks are."""
+    rows = []
+    for e, ep in ctx["eps"].items():
+        bt = ctx["beats"].get(e, {"hooks": [], "cliffhangers": []})
+        rows.append({
+            "ep": e, "duration": ep.duration, "logline": ep.logline,
+            "hooks": [{"id": h["id"], "t": ep.blocks[h["peak"]].start, "score": h["score"], "type": h["type"],
+                       "quote": clean_quote(h["quote"])} for h in bt["hooks"]],
+            "cliffs": [{"id": c["id"], "t": ep.blocks[c["cut"]].end, "score": c["score"], "type": c["type"],
+                        "quote": clean_quote(c["quote"])} for c in bt["cliffhangers"]],
+            "writer_marks": writer_check.writer_moments(ep),
+        })
+    return rows
+
+
+CHECK_WORDS = {
+    "duration_20_60s": "20 to 60 seconds long",
+    "hook_in_first_3s": "Hook lands in the first 3 seconds",
+    "ends_on_cliffhanger": "Ends on the cliffhanger line",
+    "answer_not_shown": "Doesn't show the answer",
+    "no_cut_mid_line": "Never cuts inside a spoken line",
+    "no_cut_mid_sentence": "Never cuts a sentence split across lines",
+    "timestamps_from_script": "Every cut is a real time from the script",
+    "within_episode": "Inside a real episode",
+    "segments_in_story_order": "Pieces in story order",
+}
+
+
+def quality_summary(ctx: dict, ranked: list[dict]) -> dict:
+    run = ctx["run"]
+    main = [r for r in ranked if r["tier"] != "Alternate"]
+    beats = ctx["beats"]
+    cross = ctx.get("cross", {})
+
+    def avg(key):
+        vals = [r["cold_viewer"][key] for r in main]
+        return round(sum(vals) / len(vals), 1) if vals else 0
+
+    disagree = [{"id": r["id"], "rank": r["rank"],
+                 "hook_editor": r["hook"]["editor_score"], "hook_viewer": r["cold_viewer"]["hook_score"],
+                 "cliff_editor": r["cliffhanger"]["editor_score"], "cliff_viewer": r["cold_viewer"]["cliffhanger_score"]}
+                for r in ranked if abs(r["hook"]["editor_score"] - r["cold_viewer"]["hook_score"]) >= 3
+                or abs(r["cliffhanger"]["editor_score"] - r["cold_viewer"]["cliffhanger_score"]) >= 3]
+    flags = []
+    for r in main:
+        why = []
+        v = r["cold_viewer"]
+        if v["standalone_score"] <= 5:
+            why.append(f"stands alone only {v['standalone_score']:.0f}/10")
+        if len(v["confusing"]) >= 5:
+            why.append(f"{len(v['confusing'])} confusing points")
+        if not v["would_watch_next"]:
+            why.append("cold viewers would not watch next")
+        if not r["setup_included"]:
+            why.append("cliffhanger set-up trimmed")
+        if r["hook"]["recap"]:
+            why.append("opens on a recap")
+        if r["hook"]["visual"]:
+            why.append("hook is visual: check the footage")
+        if why:
+            flags.append({"rank": r["rank"], "id": r["id"], "reasons": why})
+    return {
+        "candidates_total": run["candidates_total"], "candidates_valid": run["candidates_valid"],
+        "checks": CHECK_WORDS,
+        "rejections": dict(Counter(k for c in ctx["all_candidates"] for k in c.get("rejected_because", [])).most_common()),
+        "hooks": sum(len(b["hooks"]) for b in beats.values()),
+        "cliffhangers": sum(len(b["cliffhangers"]) for b in beats.values()),
+        "repaired": sum(len(b["warnings"]) for b in beats.values()),
+        "episodes_without_hook": [e for e, b in beats.items() if not b["hooks"]],
+        "episodes_without_cliffhanger": [e for e, b in beats.items() if not b["cliffhangers"]],
+        "cross": {"pairs": len(cross.get("pairs", [])), "broke_rules_first_try": len(cross.get("rejected_first_try", [])),
+                  "still_wrong_after_repair": len(cross.get("rejected_after_repair", [])),
+                  "assembled": sum(1 for c in ctx["all_candidates"] if c["kind"] == "cross-episode")},
+        "parse_warnings": run["parse_warnings"],
+        "averages": {"hook": avg("hook_score"), "cliffhanger": avg("cliffhanger_score"), "standalone": avg("standalone_score")},
+        "would_watch_next": sum(r["cold_viewer"]["would_watch_next"] for r in main), "main_list": len(main),
+        "judges": run.get("judges", 1),
+        "disagree": disagree, "flags": flags,
+    }
 
 
 def _tc(sec: float, fps: int) -> str:
@@ -160,7 +263,7 @@ def _report_md(ctx: dict, ranked: list[dict]) -> str:
         "",
         f"Model `{run['model']}` · prompts {run['prompt_version']} · {run['episodes']} episodes "
         f"({run['runtime_min']} min of show) · {run['candidates_valid']} valid clips found · "
-        f"{run['shortlisted']} cold-viewer tested · cost {run['cost_display']}",
+        f"{run.get('cold_viewer_tested', run['shortlisted'])} tested by {run.get('judges', 1)} cold viewer(s)",
         "",
         f"**Premise:** {bible.get('premise', '')}",
         f"**What the title promises:** {bible.get('title_promise', '')}",
@@ -214,6 +317,9 @@ def _report_md(ctx: dict, ranked: list[dict]) -> str:
             f"",
             f"**Cold viewer understood:** {v['what_i_understood']}"
             + (f" · confused by: {'; '.join(v['confusing'])}" if v["confusing"] else ""),
+            *(["", "**Panel:** " + " · ".join(
+                f"{p['viewer']}: hook {p['hook']:.0f}, cliffhanger {p['cliffhanger']:.0f}, stands alone {p['standalone']:.0f}"
+                for p in v["panel"])] if len(v.get("panel", [])) > 1 else []),
             "",
             "<details><summary>Script of the clip</summary>",
             "",
@@ -235,66 +341,30 @@ def _report_md(ctx: dict, ranked: list[dict]) -> str:
 
 def _quality_md(ctx: dict, ranked: list[dict]) -> str:
     run = ctx["run"]
-    main = [r for r in ranked if r["tier"] != "Alternate"]
-    rejected = Counter(k for c in ctx["all_candidates"] for k in c.get("rejected_because", []))
-    beats = ctx["beats"]
-    n_hooks = sum(len(b["hooks"]) for b in beats.values())
-    n_cliffs = sum(len(b["cliffhangers"]) for b in beats.values())
-    repaired = sum(len(b["warnings"]) for b in beats.values())
-    no_hooks = [e for e, b in beats.items() if not b["hooks"]]
-    no_cliffs = [e for e, b in beats.items() if not b["cliffhangers"]]
-
-    def avg(key):
-        vals = [r["cold_viewer"][key] for r in main]
-        return round(sum(vals) / len(vals), 1) if vals else 0
-
-    disagree = [r for r in ranked if abs(r["hook"]["editor_score"] - r["cold_viewer"]["hook_score"]) >= 3
-                or abs(r["cliffhanger"]["editor_score"] - r["cold_viewer"]["cliffhanger_score"]) >= 3]
-    flags = []
-    for r in main:
-        why = []
-        v = r["cold_viewer"]
-        if v["standalone_score"] <= 5:
-            why.append(f"stands alone only {v['standalone_score']:.0f}/10")
-        if len(v["confusing"]) >= 5:
-            why.append(f"{len(v['confusing'])} confusing points")
-        if not v["would_watch_next"]:
-            why.append("cold viewer would not watch next")
-        if not r["setup_included"]:
-            why.append("cliffhanger set-up trimmed")
-        if r["hook"]["recap"]:
-            why.append("opens on a recap")
-        if r["hook"]["visual"]:
-            why.append("hook is visual: check the footage")
-        if why:
-            flags.append(f"- #{r['rank']} {r['id']}: {'; '.join(why)}")
-
+    q = quality_summary(ctx, ranked)
     L = [
         "# Quality report",
         "",
-        f"Model `{run['model']}` · {run['episodes']} episodes · {run['llm_calls']} LLM calls "
-        f"({run['cached_calls']} from cache) · {run['tokens_in']:,} tokens in / {run['tokens_out']:,} out · "
-        f"cost {run['cost_display']} · {run['seconds']}s",
+        f"Model `{run['model']}` · {run['episodes']} episodes · {run['llm_calls']} model calls "
+        f"({run['cached_calls']} from cache) · {run['tokens_in']:,} tokens in / {run['tokens_out']:,} out · {run['seconds']}s",
         "",
         "## Hard checks (code, every candidate)",
         "",
-        f"- Clips assembled: **{run['candidates_total']}**; passed every hard check: **{run['candidates_valid']}**",
-        "- Checks: 20-60s long; hook lands in the first 3s; ends on the cliffhanger line; the answer is not shown; "
-        "no cut inside a spoken line or a sentence split across lines; every timestamp exists in the script; "
-        "segments in story order.",
+        f"- Clips assembled: **{q['candidates_total']}**; passed every hard check: **{q['candidates_valid']}**",
+        "- Checks: " + "; ".join(w[0].lower() + w[1:] for w in q["checks"].values()) + ".",
     ]
-    if rejected:
-        L.append("- Rejections by check: " + ", ".join(f"{k} ×{v}" for k, v in rejected.most_common()))
-    cross = ctx.get("cross", {})
-    n_cross = sum(1 for c in ctx["all_candidates"] if c["kind"] == "cross-episode")
-    L.append(f"- Cross-episode stitches: {len(cross.get('pairs', []))} valid pairs proposed "
-             f"({len(cross.get('rejected_first_try', []))} broke the rules on the first try and were sent back; "
-             f"{len(cross.get('rejected_after_repair', []))} still wrong after repair) → {n_cross} assembled")
+    if q["rejections"]:
+        L.append("- Rejections by check: " + ", ".join(f"{k} ×{v}" for k, v in q["rejections"].items()))
+    c = q["cross"]
+    L.append(f"- Cross-episode stitches: {c['pairs']} valid pairs proposed "
+             f"({c['broke_rules_first_try']} broke the rules on the first try and were sent back; "
+             f"{c['still_wrong_after_repair']} still wrong after repair) → {c['assembled']} assembled")
     L += [
-        f"- Model-marked moments: {n_hooks} hooks, {n_cliffs} cliffhangers; "
-        f"{repaired} line-number problems repaired or dropped by code",
-        f"- Episodes with no hook found: {no_hooks or 'none'} · with no cliffhanger: {no_cliffs or 'none'}",
-        f"- Parser warnings: {run['parse_warnings']}",
+        f"- Model-marked moments: {q['hooks']} hooks, {q['cliffhangers']} cliffhangers; "
+        f"{q['repaired']} line-number problems repaired or dropped by code",
+        f"- Episodes with no hook found: {q['episodes_without_hook'] or 'none'} · "
+        f"with no cliffhanger: {q['episodes_without_cliffhanger'] or 'none'}",
+        f"- Parser warnings: {q['parse_warnings']}",
         "",
         "## Do the cuts land where the writers put the suspense?",
         "",
@@ -311,22 +381,24 @@ def _quality_md(ctx: dict, ranked: list[dict]) -> str:
         ]
     else:
         L += ["- This show's scripts carry no writer cliffhanger marks."]
+    a = q["averages"]
+    n = q["judges"]
     L += [
         "",
-        "## Cold-viewer test (main list)",
+        f"## Cold-viewer test (main list, {n} viewer{'s' if n != 1 else ''} per clip, averaged)",
         "",
-        f"- Average: hook {avg('hook_score')} · cliffhanger {avg('cliffhanger_score')} · stands alone {avg('standalone_score')} (out of 10)",
-        f"- Would watch the next episode: {sum(r['cold_viewer']['would_watch_next'] for r in main)}/{len(main)}",
+        f"- Average: hook {a['hook']} · cliffhanger {a['cliffhanger']} · stands alone {a['standalone']} (out of 10)",
+        f"- Would watch the next episode: {q['would_watch_next']}/{q['main_list']}",
         "",
-        "## Where the editor model and the cold viewer disagree (≥3 points)",
+        "## Where the editor model and the cold viewers disagree (≥3 points)",
         "",
         "Large gaps mean one of the two judgements is wrong; these are the first clips a human should check.",
         "",
     ]
-    L += [f"- {r['id']} (#{r['rank']}): hook editor {r['hook']['editor_score']:.0f} vs viewer "
-          f"{r['cold_viewer']['hook_score']:.0f}; cliffhanger editor {r['cliffhanger']['editor_score']:.0f} vs viewer "
-          f"{r['cold_viewer']['cliffhanger_score']:.0f}" for r in disagree] or ["- none"]
-    L += ["", "## Flags on the main list", ""] + (flags or ["- none"])
+    L += [f"- {d['id']} (#{d['rank']}): hook editor {d['hook_editor']:.0f} vs viewers {d['hook_viewer']:.1f}; "
+          f"cliffhanger editor {d['cliff_editor']:.0f} vs viewers {d['cliff_viewer']:.1f}" for d in q["disagree"]] or ["- none"]
+    L += ["", "## Flags on the main list", ""]
+    L += [f"- #{f['rank']} {f['id']}: {'; '.join(f['reasons'])}" for f in q["flags"]] or ["- none"]
     L += [
         "",
         "## Known limits",
@@ -334,6 +406,6 @@ def _quality_md(ctx: dict, ranked: list[dict]) -> str:
         "- Works from the screenplay, not the footage: it cannot see whether a slap lands or a shot looks good. Visual hooks are flagged for a human check.",
         "- Cut points are exact to the script's timings; the edit may still need a trim of under a second.",
         "- Scores are model judgements of story strength, not measured ad performance. Real CTR and retention should tune the weights.",
-        "- The cold viewer is also a model, so it can share the editor model's blind spots; a second model or a human panel reduces this.",
+        "- The cold viewers are also models, so they can share the editor model's blind spots; a human panel reduces this.",
     ]
     return "\n".join(L) + "\n"

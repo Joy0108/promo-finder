@@ -14,3 +14,6 @@ outputs/
 __pycache__/
 *.pyc
 .venv/
+
+# Vercel
+.vercel/

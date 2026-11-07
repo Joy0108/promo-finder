@@ -109,9 +109,19 @@ def _split_label(label: str) -> tuple[str, str, str]:
     return name, kind, tags
 
 
+def clean_text(text: str) -> str:
+    """Same text whether it came from disk or from a browser upload: no BOM, LF line ends."""
+    return text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+
+
 def parse_episode(path: str | Path) -> Episode:
     path = Path(path)
-    lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    return parse_text(path.read_text(encoding="utf-8-sig", errors="replace"), path.name)
+
+
+def parse_text(text: str, filename: str) -> Episode:
+    """Parse one screenplay given as text (`filename` is its file name)."""
+    lines = clean_text(text).splitlines()
 
     meta = {"EPISODE NUMBER": "", "EPISODE LOGLINE": "", "CONTINUITY NOTES": ""}
     scenes: list[dict] = []
@@ -185,7 +195,7 @@ def parse_episode(path: str | Path) -> Episode:
             warnings.append(f"line {n}: stray text ignored: {line[:60]}")
     close_block()
 
-    ep_num = _episode_number(meta["EPISODE NUMBER"], path.name)
+    ep_num = _episode_number(meta["EPISODE NUMBER"], filename)
     # Screenplay order is kept (it is the editor's reading order); ties broken by time.
     raw_blocks.sort(key=lambda b: (b["start"], b["line"]))
     blocks = [
@@ -202,7 +212,7 @@ def parse_episode(path: str | Path) -> Episode:
         warnings.append("no timed blocks found: is this a screenplay in the expected format?")
     return Episode(
         ep=ep_num, logline=meta["EPISODE LOGLINE"], continuity=meta["CONTINUITY NOTES"],
-        duration=duration, source=path.name, scenes=scenes, blocks=blocks, warnings=warnings,
+        duration=duration, source=filename, scenes=scenes, blocks=blocks, warnings=warnings,
     )
 
 
@@ -219,7 +229,17 @@ def load_show(folder: str | Path) -> list[Episode]:
     files = sorted(p for p in folder.glob("*.txt") if p.is_file())
     if not files:
         raise FileNotFoundError(f"no .txt screenplays in {folder}")
-    episodes = [parse_episode(p) for p in files]
+    return check_unique([parse_episode(p) for p in files])
+
+
+def load_texts(files: list[dict]) -> list[Episode]:
+    """Same as load_show, for uploaded files: [{"name": "episode-001.txt", "text": "..."}]."""
+    if not files:
+        raise ValueError("no screenplays were uploaded")
+    return check_unique([parse_text(f["text"], f["name"]) for f in files])
+
+
+def check_unique(episodes: list[Episode]) -> list[Episode]:
     episodes.sort(key=lambda e: e.ep)
     seen: dict[int, str] = {}
     for e in episodes:

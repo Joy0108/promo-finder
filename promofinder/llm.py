@@ -2,7 +2,7 @@
 
 Every provider below speaks the OpenAI chat-completions protocol, so swapping
 the model is a config change (env var, CLI flag or the app's sidebar), never a
-code change. Responses are cached on disk: re-running a show costs nothing, and
+code change. Responses are cached on disk: re-running a show makes no new calls, and
 a crashed run resumes where it stopped.
 """
 from __future__ import annotations
@@ -26,20 +26,6 @@ PROVIDERS: dict[str, dict] = {
     "custom":     {"base_url": None, "key_env": "LLM_API_KEY"},
 }
 
-# USD per 1M tokens (input, output). List prices at time of writing; used only
-# for the cost estimate in run logs. Unknown models report tokens only.
-PRICES: dict[str, tuple[float, float]] = {
-    "gpt-4.1": (2.00, 8.00),
-    "gpt-4.1-mini": (0.40, 1.60),
-    "gpt-4.1-nano": (0.10, 0.40),
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-5": (1.25, 10.00),
-    "gpt-5-mini": (0.25, 2.00),
-    "gpt-5-nano": (0.05, 0.40),
-}
-
-
 @dataclass
 class LLMConfig:
     provider: str = "openai"
@@ -49,6 +35,9 @@ class LLMConfig:
     temperature: float = 0.2
     cache_dir: str | None = ".cache/llm"
     offline: bool = False  # replay cached responses only; never call the API
+    timeout: float = 240.0   # seconds per request
+    max_retries: int = 6     # SDK-level retries on 429/5xx
+    attempts: int = 5        # our retries on unparseable output or provider errors
 
     @classmethod
     def from_env(cls, provider: str | None = None, model: str | None = None,
@@ -73,18 +62,10 @@ class Usage:
     cached_calls: int = 0
     prompt_tokens: int = 0          # spent in this run
     completion_tokens: int = 0
-    cached_prompt_tokens: int = 0   # what the cached responses originally cost
+    cached_prompt_tokens: int = 0   # tokens behind the responses served from cache
     cached_completion_tokens: int = 0
     estimated_calls: int = 0        # cached entries whose original usage had to be estimated
     by_stage: dict = field(default_factory=dict)
-
-    def cost_usd(self, model: str, include_cached: bool = False) -> float | None:
-        price = PRICES.get(model)
-        if not price:
-            return None
-        pt = self.prompt_tokens + (self.cached_prompt_tokens if include_cached else 0)
-        ct = self.completion_tokens + (self.cached_completion_tokens if include_cached else 0)
-        return round(pt / 1e6 * price[0] + ct / 1e6 * price[1], 4)
 
 
 class LLMError(RuntimeError):
@@ -103,14 +84,18 @@ class LLM:
 
         self.cfg = cfg
         # the SDK retries 429/5xx itself, honouring the provider's retry-after headers
-        self.client = OpenAI(api_key=cfg.api_key or "offline", base_url=cfg.base_url, max_retries=6, timeout=240)
+        self.client = OpenAI(api_key=cfg.api_key or "offline", base_url=cfg.base_url,
+                             max_retries=cfg.max_retries, timeout=cfg.timeout)
         self.usage = Usage()
         self._lock = threading.Lock()
         self._supports_json_mode = True
         self._supports_temperature = True
         self.cache = Path(cfg.cache_dir) if cfg.cache_dir else None
         if self.cache:
-            self.cache.mkdir(parents=True, exist_ok=True)
+            try:
+                self.cache.mkdir(parents=True, exist_ok=True)
+            except OSError:  # read-only file system (serverless): run without a cache
+                self.cache = None
 
     # ------------------------------------------------------------------ public
     def json(self, system: str, user: str, *, stage: str = "misc", temperature: float | None = None) -> dict:
@@ -130,7 +115,7 @@ class LLM:
             raise CacheMiss(f"offline mode: no cached '{stage}' response for these inputs")
 
         last_err: Exception | None = None
-        for attempt in range(5):
+        for attempt in range(self.cfg.attempts):
             try:
                 text, pt, ct = self._call(system, user, temp)
                 data = parse_json(text)
@@ -150,7 +135,8 @@ class LLM:
                     continue
                 if any(s in msg for s in ("invalid api key", "incorrect api key", "401", "model_not_found", "does not exist")):
                     raise LLMError(f"{self.cfg.label}: {e}") from e
-            time.sleep(min(30, 2 ** attempt + 0.5))
+            if attempt + 1 < self.cfg.attempts:
+                time.sleep(min(30, 2 ** attempt + 0.5))
         raise LLMError(f"{self.cfg.label} failed after retries: {last_err}")
 
     # ----------------------------------------------------------------- private
