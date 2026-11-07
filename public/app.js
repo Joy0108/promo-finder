@@ -199,31 +199,31 @@ function homeView() {
     <div>
       <p class="kicker">For promo editors</p>
       <h1>Find the promos hiding in a show's scripts.</h1>
-      <p class="lede">Upload every episode's screenplay. Promo Finder marks the hooks and cliffhangers, cuts 20 to 60 second clips on real line and shot boundaries, checks each one against nine rules, has a panel of cold viewers judge it, and hands you a ranked list with exact timestamps and a cut list for Premiere.</p>
+      <p class="lede">Upload a show's episode scripts. Promo Finder finds the strongest hooks and cliffhangers, cuts them into 20 to 60 second clips, checks every cut, and hands you a ranked list that's ready for the edit.</p>
       <ol class="how-mini">
-        <li><span class="n">01</span><div><b>Upload the show.</b> The .zip of episode scripts, as Kuku exports them.</div></li>
-        <li><span class="n">02</span><div><b>It reads every episode</b> and points at the strongest openings and endings, by line number. Code does the timing, the cutting and the checking.</div></li>
-        <li><span class="n">03</span><div><b>Review the ranked list.</b> Each promo has exact in and out points, the hook, the cliffhanger, why it works and the script. Mark Use, Maybe or Reject.</div></li>
-        <li><span class="n">04</span><div><b>Download the cut list</b> and open it in Premiere or Resolve with every promo already cut.</div></li>
+        <li><span class="n">01</span><div><b>Upload the show</b> as a .zip of episode scripts.</div></li>
+        <li><span class="n">02</span><div><b>AI picks the moments, code does the cutting.</b> Every clip is checked against nine rules, then judged by three cold viewers.</div></li>
+        <li><span class="n">03</span><div><b>Review and export.</b> Exact in and out points, the reasoning behind each pick, and a cut list for Premiere or Resolve.</div></li>
       </ol>
       <p class="open-saved">Already have results? <button class="linkish" type="button" id="open-btn">Open a results file</button>
         <input type="file" id="open-input" accept=".json,application/json" multiple hidden></p>
     </div>
     <div class="card new-run">
       <h2>New run</h2>
-      <p class="muted small">Takes a minute or two for a 50-episode show.</p>
-      ${state.config?.offline ? '<div class="notice bad">The analysis server isn\'t reachable from this page. You can still open a saved results file.</div>' : ''}
+      <p class="faint small" style="margin:0">About a minute or two for a 50-episode show.</p>
+      ${state.config?.offline ? '<div class="notice bad" style="margin-top:14px">The analysis server isn\'t reachable from this page. You can still open a saved results file.</div>' : ''}
       <label class="drop" id="drop" tabindex="0">
         <input type="file" id="file-input" accept=".zip,.txt" multiple hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
         <span class="drop-title">Drop the show's .zip here</span>
-        <span class="drop-sub">or the episode .txt files · click to choose</span>
+        <span class="drop-sub">or click to choose · .zip or .txt files</span>
       </label>
       <div id="loaded">${loadedBlock()}</div>
       ${settingsBlock()}
       <label class="check-label"><input type="checkbox" id="opt-baseline" ${state.settings.baseline ? 'checked' : ''}>
-        <span>Also run the "one big prompt" baseline, so you can compare it with Promo Finder.</span></label>
-      <button class="btn primary" type="button" id="go" ${canStart() ? '' : 'disabled'}>Find promos</button>
-      <p class="fine">Your scripts are sent to the model provider you pick, only to be read for this run. This site doesn't store them.</p>
+        <span>Also run the "one big prompt" baseline for comparison</span></label>
+      <button class="btn primary wide" type="button" id="go" ${canStart() ? '' : 'disabled'}>Find promos</button>
+      <p class="fine">Scripts go only to the model provider you pick. Nothing is stored.</p>
     </div>
   </section>`;
 }
@@ -755,7 +755,7 @@ function baselineTab(R) {
         <li><b>It can't test itself.</b> Nobody asks a stranger whether the clip makes sense on its own.</li>
       </ul>
     </div>
-    <div class="vs" style="margin:0">
+    <div class="vs card" style="margin:0">
       <div><h3>One big prompt</h3><p class="sub">${esc(S.model || '')}</p>
         <dl>
           <dt>Usable as they are</dt><dd class="bad">${S.usable_as_is} of ${S.promos}</dd>
@@ -775,7 +775,7 @@ function baselineTab(R) {
 
   <div class="block">
     <h3>Rule by rule</h3>
-    <div class="legend"><span><i style="background:var(--ink-3)"></i>One big prompt</span><span><i style="background:var(--accent)"></i>Promo Finder</span></div>
+    <div class="legend"><span><i style="background:var(--fg-3)"></i>One big prompt</span><span><i style="background:var(--fg)"></i>Promo Finder</span></div>
     <div class="bars">${brows.map(([rule, k]) => `
       <div class="brow"><span>${esc(rule)}</span><div class="pair">
         ${bar('', 'One big prompt', k, S.promos)}
@@ -850,10 +850,10 @@ function mapTab(R) {
       <div>${w.writer_marked_moments ? `<div class="notice ok"><b>Checked against the writers.</b> The scripts mark ${w.writer_marked_moments} cliffhangers themselves (the black ticks). The tool's cliffhangers land within ${w.tolerance_s} seconds of ${w.tool_cliffhanger_on_mark} of them${w.missed?.length ? ` (missed: ${w.missed.map(esc).join(', ')})` : ''}, and ${w.main_list_ending_on_mark} of the ${w.main_list} ranked promos end on one.</div>` : ''}</div>
     </div>
     <div class="legend">
-      <span><svg width="12" height="12"><circle cx="6" cy="6" r="4" fill="var(--accent)"/></svg> Hook</span>
-      <span><svg width="12" height="12"><rect x="2.5" y="2.5" width="7" height="7" transform="rotate(45 6 6)" fill="var(--blue)"/></svg> Cliffhanger</span>
-      <span><svg width="12" height="12"><line x1="6" x2="6" y1="1" y2="11" stroke="var(--ink)" stroke-width="1.6"/></svg> Writers' cliffhanger mark</span>
-      <span><i style="background:var(--ink);opacity:.25;width:18px"></i>Ranked promo (number is its rank)</span>
+      <span><svg width="12" height="12"><circle cx="6" cy="6" r="4" fill="var(--hook)"/></svg> Hook</span>
+      <span><svg width="12" height="12"><rect x="2.5" y="2.5" width="7" height="7" transform="rotate(45 6 6)" fill="var(--cliff)"/></svg> Cliffhanger</span>
+      <span><svg width="12" height="12"><line x1="6" x2="6" y1="1" y2="11" stroke="var(--fg)" stroke-width="1.6"/></svg> Writers' cliffhanger mark</span>
+      <span><i style="background:var(--fg);opacity:.18;width:18px"></i>Ranked promo (number is its rank)</span>
     </div>
     <div class="card map map-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of hooks, cliffhangers and promos across the episodes">${grid.join('')}${spans}${rows}</svg></div>`;
 }
@@ -1133,6 +1133,26 @@ document.addEventListener('keydown', (e) => {
     $(`.pitem[data-id="${list[j].id}"]`)?.scrollIntoView({ block: 'nearest' });
   }
 });
+
+// ------------------------------------------------------------------ theme
+const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>';
+const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>';
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+const theme = () => document.documentElement.dataset.theme || (systemDark.matches ? 'dark' : 'light');
+function paintToggle() {
+  const b = $('#theme-toggle');
+  const dark = theme() === 'dark';
+  b.innerHTML = dark ? SUN : MOON;
+  b.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+}
+$('#theme-toggle').addEventListener('click', () => {
+  const next = theme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('pf:theme', next); } catch { /* storage off: fine */ }
+  paintToggle();
+});
+systemDark.addEventListener?.('change', paintToggle);
+paintToggle();
 
 $('#home-link').addEventListener('click', (e) => { e.preventDefault(); go(state.results ? 'results' : 'home'); });
 
