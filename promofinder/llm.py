@@ -76,6 +76,57 @@ class CacheMiss(LLMError):
     """Raised in offline mode when a response is not in the cache."""
 
 
+class KeyRejected(LLMError):
+    """The provider refused the API key. Retrying won't help."""
+
+
+class ModelNotFound(LLMError):
+    """The provider doesn't know this model name. Retrying won't help."""
+
+
+class RateLimited(LLMError):
+    """The provider refused because of a rate limit or a used-up quota (HTTP 429)."""
+
+
+NAMES = {"openai": "OpenAI", "gemini": "Gemini", "groq": "Groq", "openrouter": "OpenRouter",
+         "anthropic": "Anthropic", "ollama": "Ollama", "custom": "The model server"}
+
+
+def describe(e: Exception) -> tuple[int | None, str]:
+    """HTTP status and the provider's own error message. Gemini wraps its error in
+    a list, which the OpenAI SDK doesn't unpack, so without this the message is
+    just "Error code: 400"."""
+    status = getattr(e, "status_code", None)
+    body = getattr(e, "body", None)
+    if isinstance(body, list) and body:
+        body = body[0]
+    msg = ""
+    if isinstance(body, dict):
+        err = body.get("error", body)
+        if isinstance(err, dict):
+            msg = str(err.get("message") or "")
+            if status is None and isinstance(err.get("code"), int):
+                status = err["code"]
+        elif isinstance(err, str):
+            msg = err
+    return status, (msg or str(e)).strip()
+
+
+def retry_after(e: Exception) -> float | None:
+    """Seconds the provider asked us to wait (Retry-After header, or Gemini's retryDelay)."""
+    resp = getattr(e, "response", None)
+    if resp is None:
+        return None
+    try:
+        h = resp.headers.get("retry-after")
+        if h:
+            return float(h)
+        m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', resp.text)
+        return float(m.group(1)) if m else None
+    except Exception:  # noqa: BLE001 - best effort only
+        return None
+
+
 class LLM:
     def __init__(self, cfg: LLMConfig):
         if not cfg.api_key and not cfg.offline:
@@ -114,8 +165,10 @@ class LLM:
         if self.cfg.offline:
             raise CacheMiss(f"offline mode: no cached '{stage}' response for these inputs")
 
+        name = NAMES.get(self.cfg.provider, self.cfg.provider)
         last_err: Exception | None = None
         for attempt in range(self.cfg.attempts):
+            wait = min(30.0, 2 ** attempt + 0.5)
             try:
                 text, pt, ct = self._call(system, user, temp)
                 data = parse_json(text)
@@ -125,19 +178,40 @@ class LLM:
             except LLMError as e:  # unparseable output: ask again
                 last_err = e
             except Exception as e:  # noqa: BLE001 - provider errors vary by SDK/provider
-                last_err = e
-                msg = str(e).lower()
-                if "response_format" in msg or "json_object" in msg:
+                status, detail = describe(e)
+                low = f"{detail} {e}".lower()
+                last_err = LLMError(f"{name} ({self.cfg.model}) returned an error"
+                                    + (f" {status}" if status else "") + f": {detail}")
+                if "response_format" in low or "json_object" in low or "json mode" in low:
                     self._supports_json_mode = False
                     continue
-                if "temperature" in msg and ("unsupported" in msg or "not support" in msg):
+                if "temperature" in low and ("unsupported" in low or "not support" in low):
                     self._supports_temperature = False
                     continue
-                if any(s in msg for s in ("invalid api key", "incorrect api key", "401", "model_not_found", "does not exist")):
-                    raise LLMError(f"{self.cfg.label}: {e}") from e
+                if status in (401, 403) or any(s in low for s in (
+                        "api key not valid", "valid api key", "invalid api key", "incorrect api key",
+                        "invalid x-api-key", "api_key_invalid", "permission denied", "unauthorized")):
+                    raise KeyRejected(f"{name} rejected the API key. Check that it is a {name} key and that it "
+                                      f"is active. ({detail})") from e
+                if status == 404 or any(s in low for s in (
+                        "model_not_found", "does not exist", "is not found", "not found for api version",
+                        "unknown model", "invalid model", "no such model")):
+                    raise ModelNotFound(f"{name} doesn't recognise the model '{self.cfg.model}'. Pick one of the "
+                                        f"suggested models or check the spelling. ({detail})") from e
+                if status == 429 or any(s in low for s in ("resource_exhausted", "quota", "rate limit", "rate_limit")):
+                    last_err = RateLimited(f"{name} is limiting this key (rate limit or quota). ({detail})")
+                    if any(s in low for s in ("insufficient_quota", "billing", "check your plan", "credit")):
+                        raise RateLimited(f"{name} says this key has no credit or quota left. Check the account's "
+                                          f"plan and billing. ({detail})") from e
+                    if any(s in low for s in ("per day", "perday", "daily")):
+                        raise RateLimited(f"{name} says this key has used up its daily quota. Try again tomorrow, "
+                                          f"or use a key on a paid plan. ({detail})") from e
+                    wait = min(30.0, retry_after(e) or wait * 2)
             if attempt + 1 < self.cfg.attempts:
-                time.sleep(min(30, 2 ** attempt + 0.5))
-        raise LLMError(f"{self.cfg.label} failed after retries: {last_err}")
+                time.sleep(wait)
+        if isinstance(last_err, (RateLimited, KeyRejected, ModelNotFound)):
+            raise last_err
+        raise LLMError(f"{self.cfg.label} failed after {self.cfg.attempts} tries: {last_err}")
 
     # ----------------------------------------------------------------- private
     def _call(self, system: str, user: str, temp: float) -> tuple[str, int, int]:

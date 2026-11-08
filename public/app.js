@@ -24,7 +24,7 @@ const SS = store('sessionStorage');
 
 const MODELS = {
   openai: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-5-mini'],
-  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+  gemini: ['gemini-2.5-flash', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'],
   groq: ['llama-3.3-70b-versatile'],
   openrouter: ['openai/gpt-4.1', 'google/gemini-2.5-flash'],
   anthropic: ['claude-sonnet-5-5', 'claude-haiku-5-5'],
@@ -76,9 +76,20 @@ function authHeaders() {
   return h;
 }
 
+// When the provider rate-limits the key (HTTP 429), slow the whole run down and
+// wait, instead of failing: free and new keys often allow only a few calls a minute.
+function slowDown() {
+  if (state.run) state.run.limit = 2;
+  const box = $('#run-error');
+  if (box && !box.querySelector('.bad')) {
+    box.innerHTML = '<div class="notice" style="margin-top:16px">The model provider is limiting how fast this key can go, so the run has slowed down and is retrying on its own. This can take a while on a free key.</div>';
+  }
+}
+
 async function api(step, body, tries = 3) {
   let last = '';
-  for (let i = 0; i < tries; i++) {
+  let waits = 0;
+  for (let i = 0; i < tries + waits; i++) {
     let r;
     try {
       r = await fetch(`/api/${step}`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
@@ -90,6 +101,13 @@ async function api(step, body, tries = 3) {
     if (r.ok) return r.json();
     try { last = (await r.json()).error; } catch { last = `${r.status} ${r.statusText}`; }
     if (r.status === 504) last = 'The step took too long and timed out.';
+    if (r.status === 429 && waits < 5 && !/daily quota|no credit|billing/i.test(last)) {
+      waits++;
+      slowDown();
+      await sleep(Math.min(60000, 10000 * waits) + Math.random() * 3000);
+      continue;
+    }
+    if (r.status === 429) break;
     if ([400, 401, 404, 413].includes(r.status)) break;
     await sleep(1500 * (i + 1));
   }
@@ -98,13 +116,14 @@ async function api(step, body, tries = 3) {
 
 async function pool(items, n, fn, run) {
   let next = 0;
-  const worker = async () => {
+  const worker = async (w) => {
     while (next < items.length && !run.stop) {
+      if (run.limit && w >= run.limit) return; // slowed down after a rate limit
       const k = next++;
       await fn(items[k], k);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, (_, w) => worker(w)));
 }
 
 // ------------------------------------------------------------------ files

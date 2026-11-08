@@ -16,7 +16,7 @@ from flask import Flask, abort, jsonify, request, send_from_directory
 load_dotenv()
 
 from promofinder import web  # noqa: E402  (after .env is loaded)
-from promofinder.llm import LLMError  # noqa: E402
+from promofinder.llm import KeyRejected, LLMError, ModelNotFound, RateLimited  # noqa: E402
 
 PUBLIC = Path(__file__).resolve().parent / "public"
 
@@ -51,6 +51,12 @@ def api_step(step: str):
         return _error(401, str(e))
     except web.InputError as e:
         return _error(400, str(e))
+    except KeyRejected as e:
+        return _error(401, str(e))
+    except ModelNotFound as e:
+        return _error(400, str(e))
+    except RateLimited as e:
+        return _error(429, str(e))
     except LLMError as e:
         return _error(502, f"The model call failed: {e}")
     except (KeyError, IndexError, TypeError, ValueError) as e:
