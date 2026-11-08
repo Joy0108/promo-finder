@@ -4,6 +4,7 @@ Reads a microdrama's episode screenplays and returns **ranked, ready-to-cut prom
 
 - the exact segments (episode plus start and end time);
 - the hook in the first 3 seconds and the cliffhanger it cuts on;
+- a short on-screen headline, checked by code (no names, no spoilers, no clickbait);
 - why it works, and when to post it.
 
 It also gives an EDL cut list that opens in Premiere or Resolve with every promo already cut.
@@ -19,7 +20,7 @@ The web app (`app.py` plus `public/`) runs the whole thing online. To use it:
 1. Upload the show's `.zip`.
 2. Watch each step run, with live progress.
 3. Review the results across six tabs:
-   - **Ranked promos**: each one with the scores explained, three cold viewers' verdicts and the script.
+   - **Ranked promos**: each one with its headline (copy it, or swap in another option that passed), the scores explained, three cold viewers' verdicts and the script.
    - **Baseline vs Promo Finder**: the "one big prompt" shortcut, with its exact prompt and every one of its failures.
    - **Show map**, **Quality checks** and **How it works**.
    - **Downloads**.
@@ -95,6 +96,7 @@ screenplays ─► 1 PARSE (code) ──────────── every lin
             ─► 8 COLD-VIEWER PANEL (3 calls/clip)  three strangers who see ONLY the clip
             ─► 9 RANK (code)                score + variety rules → ranked list
             ─► 10 POSTING NOTES (1 call)    why each top clip is posted where it is
+            ─► 11 HEADLINES (1 call/promo)  on-screen text: 3 options, 5 code checks, never changes a score
 ```
 
 **The rule: the model judges the drama; code does everything that can be checked.**
@@ -125,15 +127,24 @@ screenplays ─► 1 PARSE (code) ──────────── every lin
   - Hook and cliffhanger each average the editor model's score with the viewers' score.
   - Variety rules then apply: one clip per story moment (including moments an episode replays from the previous one), no overlapping clips, and at most two clips per episode.
 
+- **On-screen headline.** Many people scroll with the sound off, so each ranked promo gets a short line of text for the top of the frame (`promofinder/headline.py`). The model writes three options (a specific question, who does what to whom, a line quoted from the clip) and names its favourite. Code keeps only the options that pass five checks:
+  - 3 to 8 words;
+  - no clickbait phrases, emojis, hashtags or shouting;
+  - no character names (strangers don't know them);
+  - no word that only appears in the minute after the cut, so it can't give the answer away;
+  - about this clip, and a quoted line must really be said in it.
+
+  If none pass, the model retries once with the failures. Two promos in the list never open with the same two words.
+
 ## Outputs (`outputs/<show>__<model>/`)
 
 | File | What it is |
 |---|---|
 | `results.json` | Everything the web app shows; open it there to review the run again |
 | `report.md` | Editor's report: ranked list, posting order and reasons, full details and the script for each clip |
-| `promos_ranked.csv` / `.json` | Every ranked promo: segments, hook, cliffhanger, scores, the cold viewers' read |
+| `promos_ranked.csv` / `.json` | Every ranked promo: headline, segments, hook, cliffhanger, scores, the cold viewers' read |
 | `promo_cuts.edl` | Cut list (CMX 3600). Import it into Premiere, Resolve or Avid and relink reel `E031` to episode 31's video; every promo is then pre-cut on the timeline |
-| `quality.md` | Hard-check results, rejections, the writer-intent check, model-vs-viewer disagreements, flags, known limits |
+| `quality.md` | Hard-check results, rejections, headline checks, the writer-intent check, model-vs-viewer disagreements, flags, known limits |
 | `writer_intent_check.json` | Do the cuts land on the moments the screenwriters marked as cliffhangers? |
 | `candidates_all.json` | Every clip assembled, with its checks and why any was rejected |
 | `beats/E###.json` | Raw model output per episode, plus what code repaired or dropped |

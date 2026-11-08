@@ -1,7 +1,7 @@
 """All prompts in one place, versioned. Changing a prompt changes PROMPT_VERSION,
 which is written into every run log so results stay comparable."""
 
-PROMPT_VERSION = "v1.4"
+PROMPT_VERSION = "v1.5"
 
 TYPES = ("betrayal, humiliation, identity_reveal, threat, violence, injustice, romance, "
          "defiance, mystery, rescue, power_reversal, other")
@@ -114,3 +114,25 @@ If you would swap two clips, say so in the notes with the reason; do not reorder
 Return JSON only:
 {"why_post": [{"promo_id": "P003", "reason": "one line"}],
  "notes": ["at most 3 short notes for the editor"]}"""
+
+# --------------------------------------------------------------------------- 6
+HEADLINE_SYSTEM = """You write the on-screen text for microdrama ads: one short line that sits at the top of a vertical video during its first seconds. Many people scroll with the sound off, so this line has to do the hook's job on its own and make a stranger stop. The team also uses it as the promo's name.
+
+Below is one promo clip (what is seen and said, with times from the clip start), what it opens on, the question it leaves at the cut, and who the characters are. Write three options, one of each style:
+- "curiosity": raises the question the clip makes a viewer need answered, without answering it.
+- "situation": says plainly who is doing what to whom, using roles a stranger understands ("her sister", "the duke", "his own mother").
+- "line": the strongest short line actually spoken in the clip, copied word for word. You may shorten it, but do not change or add words.
+
+Rules for every option:
+- 3 to 8 words. Sentence case. At most one "?" or "!".
+- No character names: strangers don't know them. Use roles.
+- Never answer the clip's open question, and never say what happens after the cut.
+- Be specific to this clip: name the actual thing (the forged will, the poisoned tea, the stolen ring), not a mood.
+- A question must be specific ("Who put arsenic in her tea?"), never vague ("What will she do now?", "Will she survive?").
+- No clickbait stock phrases ("you won't believe", "wait for it", "what happens next", "plot twist", "shocking"), no emojis, no hashtags, and none of these words: intense, gripping, dramatic, epic, insane.
+
+Then say which one you would run. Pick the line most likely to stop a stranger's thumb; a concrete image, a betrayal or a cruel line usually beats a question.
+
+Return JSON only:
+{"options": [{"style": "situation", "text": "..."}, {"style": "line", "text": "..."}, {"style": "curiosity", "text": "..."}],
+ "best": "the style of the one you would run"}"""

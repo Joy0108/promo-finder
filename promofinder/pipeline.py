@@ -1,5 +1,6 @@
 """End-to-end run: parse -> show bible -> moments -> cross-episode pairs ->
-assemble -> hard checks -> cold-viewer panel -> rank -> posting plan -> outputs.
+assemble -> hard checks -> cold-viewer panel -> rank -> posting plan ->
+on-screen headlines -> outputs.
 
 The command line runs it in one go (`run`); the web app calls the same stages
 one request at a time (see promofinder/web.py)."""
@@ -15,6 +16,7 @@ from .assemble import build_candidates, shortlist
 from .beats import mark_beats
 from .bible import bible_brief, build_bible
 from .critic import cold_view
+from .headline import add_headlines
 from .llm import LLM, CacheMiss, LLMConfig
 from .parse import Episode, load_show
 from .prompts import CROSS_SYSTEM, PLAN_SYSTEM, PROMPT_VERSION
@@ -73,7 +75,7 @@ def run(show_dir: str | Path, out_root: str | Path = "outputs", cfg: LLMConfig |
             futures[f]["viewer"] = f.result()
             progress("cold-viewer", i, len(futures))
 
-    # 7. rank (code) + posting plan (1 call)
+    # 7. rank (code) + posting plan (1 call) + a headline per ranked promo (1 call each)
     ctx = finish(title, cfg, all_eps, bible, beats, cross, found, llm, top_n=top_n, critic_k=critic_k,
                  judges=judges, workers=workers, started=t0)
     progress("ranked", 1, 1)
@@ -100,8 +102,9 @@ def usage_dict(u) -> dict:
 def finish(title: str, cfg: LLMConfig, all_eps: list[Episode], bible: dict, beats: dict[int, dict], cross: dict,
            found: dict, llm: LLM, *, top_n: int = 20, critic_k: int = 40, judges: int = 3, workers: int = 6,
            started: float | None = None, seconds: float | None = None, usage_before: dict | None = None) -> dict:
-    """Rank the tested clips, ask for posting notes, and collect everything the
-    outputs are written from. `usage_before` carries the web app's earlier calls."""
+    """Rank the tested clips, ask for posting notes, write each promo's on-screen
+    headline, and collect everything the outputs are written from.
+    `usage_before` carries the web app's earlier calls."""
     eps = {e.ep: e for e in all_eps}
     tested = [c for c in found["shortlist"] if c.get("viewer")]
     names: set[str] = set()  # character names say nothing about WHICH moment a clip shows
@@ -113,6 +116,7 @@ def finish(title: str, cfg: LLMConfig, all_eps: list[Episode], bible: dict, beat
         plan = posting_plan(ranked, bible, llm)
     except CacheMiss:  # offline replay after a ranking change: everything else is still exact
         plan = {"why_post": [], "notes": ["Posting notes skipped: offline replay, and this ranking has no cached notes."]}
+    headlines_skipped = add_headlines(ranked, eps, bible, llm, workers)  # after ranking: never changes a score
 
     u = usage_dict(llm.usage)
     if usage_before:
@@ -132,6 +136,8 @@ def finish(title: str, cfg: LLMConfig, all_eps: list[Episode], bible: dict, beat
         "seconds": round(seconds if seconds is not None else time.time() - (started or time.time()), 1),
         "settings": {"critic_k": critic_k, "top_n": top_n, "workers": workers, "judges": judges},
     }
+    if headlines_skipped:
+        run_info["headlines_skipped"] = headlines_skipped
     if not usage_before:
         run_info["by_stage"] = llm.usage.by_stage
     return {"run": run_info, "bible": bible, "beats": beats, "cross": cross, "eps": eps,

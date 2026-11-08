@@ -199,11 +199,11 @@ function homeView() {
     <div>
       <p class="kicker">For promo editors</p>
       <h1>Find the promos hiding in a show's scripts.</h1>
-      <p class="lede">Upload a show's episode scripts. Promo Finder finds the strongest hooks and cliffhangers, cuts them into 20 to 60 second clips, checks every cut, and hands you a ranked list that's ready for the edit.</p>
+      <p class="lede">Upload a show's episode scripts. Promo Finder finds the strongest hooks and cliffhangers, cuts them into 20 to 60 second clips, checks every cut, and hands you a ranked list that's ready for the edit, each promo with its own on-screen headline.</p>
       <ol class="how-mini">
         <li><span class="n">01</span><div><b>Upload the show</b> as a .zip of episode scripts.</div></li>
         <li><span class="n">02</span><div><b>AI picks the moments, code does the cutting.</b> Every clip is checked against nine rules, then judged by three cold viewers.</div></li>
-        <li><span class="n">03</span><div><b>Review and export.</b> Exact in and out points, the reasoning behind each pick, and a cut list for Premiere or Resolve.</div></li>
+        <li><span class="n">03</span><div><b>Review and export.</b> Exact in and out points, a checked headline for the top of the frame, the reasoning behind each pick, and a cut list for Premiere or Resolve.</div></li>
       </ol>
       <p class="open-saved">Already have results? <button class="linkish" type="button" id="open-btn">Open a results file</button>
         <input type="file" id="open-input" accept=".json,application/json" multiple hidden></p>
@@ -295,7 +295,7 @@ const STAGES = [
   ['cross', 'Pair moments across episodes', 'two-part promos'],
   ['assemble', 'Cut the clips and run the nine checks', 'code only'],
   ['critic', 'Cold-viewer panel', 'three strangers judge each clip'],
-  ['finish', 'Rank and write the outputs', 'score, variety, cut list'],
+  ['finish', 'Rank and write the headlines', 'score, variety, on-screen text, cut list'],
 ];
 
 function runningView() {
@@ -519,6 +519,8 @@ function showResults(raw) {
   R.reason = Object.fromEntries((raw.plan?.why_post || []).map((x) => [x.promo_id, x.reason]));
   R.decKey = `pf:dec:${slug(raw.run.show)}:${raw.run.model}`;
   R.dec = LS.get(R.decKey, {});
+  R.headKey = `${R.decKey}:headline`;
+  R.heads = LS.get(R.headKey, {});
   Object.defineProperty(R, 'baseline', { get: () => raw.baseline || null, set: (v) => { raw.baseline = v; } });
   state.results = R;
   state.sel = R.main[0]?.id || null;
@@ -587,7 +589,7 @@ function promosTab(R) {
       <span class="rk">${p.rank}</span>
       <span class="tc">E${s0.episode} ${s0.start}${segs} · ${Math.round(p.duration_s)}s ${d ? `<span class="dec ${d}">${d}</span>` : ''}</span>
       <span class="sc">${n2(p.score)}</span>
-      <span class="q">${esc(unquote(p.hook.quote))}</span></button>`;
+      <span class="q${headOf(R, p) ? ' hl' : ''}">${esc(headOf(R, p) || unquote(p.hook.quote))}</span></button>`;
   };
   const sel = R.promos.find((p) => p.id === state.sel) || R.main[0];
   return `
@@ -624,6 +626,23 @@ const CHECK_WORDS = {
   segments_in_story_order: 'Pieces in story order',
 };
 
+const HEAD_STYLE = { curiosity: 'Question', situation: 'Who does what', line: 'Line from the clip' };
+const headOf = (R, p) => R.heads[p.id] || p.headline || '';
+
+function headBlock(R, p) {
+  const opts = (p.headline_options || []).filter((o) => o.passed);
+  const cur = headOf(R, p);
+  if (!cur) return `<h2>${kindWords(p)}</h2>`;
+  const style = opts.find((o) => o.text === cur)?.style;
+  const others = opts.filter((o) => o.text !== cur);
+  return `
+    <h2 class="headline">${esc(cur)}</h2>
+    <p class="dsub">${kindWords(p)} <span class="sep">·</span> On-screen text${style ? `, ${(HEAD_STYLE[style] || style).toLowerCase()}` : ''}
+      <button class="linkish" type="button" data-copy="${esc(cur)}">Copy</button>${R.heads[p.id] ? ' <span class="faint">(your pick)</span>' : ''}</p>
+    ${others.length ? `<div class="alts"><span class="faint small">Other options that passed the checks:</span>
+      ${others.map((o) => `<button type="button" class="alt-head" data-head="${esc(o.text)}" title="${esc(HEAD_STYLE[o.style] || o.style)}: use this one instead">${esc(o.text)}</button>`).join('')}</div>` : ''}`;
+}
+
 function promoDetail(R, p) {
   const s = p.scores || {};
   const v = p.cold_viewer || {};
@@ -647,7 +666,7 @@ function promoDetail(R, p) {
     <div class="dhead">
       <div>
         <p class="kicker">#${p.rank} · ${esc(p.tier)}${p.alternate_because ? ` · ${esc(p.alternate_because)}` : ''}</p>
-        <h2>${kindWords(p)}</h2>
+        ${headBlock(R, p)}
       </div>
       <div class="score-big"><b>${n2(p.score)}</b><span>score out of 10</span></div>
     </div>
@@ -859,6 +878,15 @@ function mapTab(R) {
 }
 
 // ---- checks
+function headlineChecks(h) {
+  if (!h) return '';
+  if (!h.options) return '<h3 style="margin-top:24px">On-screen headlines</h3><p class="muted">None were written in this run.</p>';
+  const fails = h.failed_by_check || {};
+  return `<h3 style="margin-top:24px">On-screen headlines (AI writes, code checks)</h3>
+    <p class="small muted">${h.with_headline} of ${h.promos} promos have a headline that passed all five checks. ${h.options} options written, ${h.passed} passed${h.retried ? `; ${h.retried} promo${h.retried > 1 ? 's' : ''} needed a retry` : ''}.</p>
+    <ul class="rules">${Object.entries(h.checks || {}).map(([k, label]) => `<li><span>${esc(label)}</span><span>${fails[k] ? `dropped ${fails[k]}` : 'no failures'}</span></li>`).join('')}</ul>`;
+}
+
 function checksTab(R) {
   const q = R.raw.quality || {};
   const run = R.run;
@@ -877,6 +905,7 @@ function checksTab(R) {
         <h3>The nine checks (code, on every clip)</h3>
         <p class="small muted">A clip that fails any of these is never shown to an editor. It is logged with the reason instead.</p>
         <ul class="rules">${Object.entries(q.checks || CHECK_WORDS).map(([k, label]) => `<li><span>${esc(label)}</span><span>${rej[k] ? `dropped ${rej[k]}` : 'no failures'}</span></li>`).join('')}</ul>
+        ${headlineChecks(q.headlines)}
       </div>
       <div>
         <div class="block">
@@ -942,6 +971,8 @@ function methodView(standalone) {
         <p>The score below, then variety rules: one clip per hook and per cliffhanger, no overlapping clips, no replay of the same moment in the next episode (it compares the words of hooks and cliffhangers, ignoring character names), and at most two promos per episode.</p></div></li>
       <li><div><h3>Posting notes <span class="tag ai">AI · 1 call</span></h3>
         <p>One line per top clip on the job it does at that point in the schedule.</p></div></li>
+      <li><div><h3>On-screen headline <span class="tag ai">AI · 1 call per promo</span> <span class="tag code">code checks</span></h3>
+        <p>Many people scroll with the sound off, so every promo gets a short line of text for the top of the frame. The AI writes three options (a specific question, who does what to whom, and a line quoted from the clip) and names its favourite. Code keeps only the options that pass five checks: 3 to 8 words · no clickbait, emojis or hashtags · no character names, since strangers don't know them · no word that only appears after the cut, so it can't give the answer away · about this clip, and a quote must really be said in it. If none pass, the AI retries once with the failures. Two promos never open with the same two words. Headlines are written after ranking, so they never change a score.</p></div></li>
       <li><div><h3>Outputs <span class="tag code">code</span></h3>
         <p>The ranked list, a quality report, a spreadsheet, and an EDL cut list that opens in Premiere, Resolve or Avid with every promo already on the timeline.</p></div></li>
     </ol>
@@ -979,9 +1010,9 @@ function downloadsTab(R) {
 
 function decisionsCsv(R) {
   const q = (t) => `"${String(t ?? '').replace(/"/g, '""')}"`;
-  const rows = [['rank', 'id', 'decision', 'clip', 'hook', 'cliffhanger', 'score']];
+  const rows = [['rank', 'id', 'decision', 'headline', 'clip', 'hook', 'cliffhanger', 'score']];
   for (const p of R.promos) {
-    rows.push([p.rank, p.id, R.dec[p.id] || '', p.segments.map((g) => `E${g.episode} ${g.start}-${g.end}`).join(' + '), unquote(p.hook.quote), unquote(p.cliffhanger.quote), p.score]);
+    rows.push([p.rank, p.id, R.dec[p.id] || '', headOf(R, p), p.segments.map((g) => `E${g.episode} ${g.start}-${g.end}`).join(' + '), unquote(p.hook.quote), unquote(p.cliffhanger.quote), p.score]);
   }
   return '﻿' + rows.map((r) => r.map(q).join(',')).join('\r\n') + '\r\n';
 }
@@ -1098,6 +1129,23 @@ function bindTab() {
 }
 
 function bindDetail() {
+  $$('[data-copy]').forEach((b) => {
+    b.onclick = async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; } catch { b.textContent = 'Select and copy'; }
+      setTimeout(() => { b.textContent = 'Copy'; }, 1400);
+    };
+  });
+  $$('[data-head]').forEach((b) => {
+    b.onclick = () => {
+      const R = state.results;
+      const p = R.promos.find((x) => x.id === state.sel);
+      if (b.dataset.head === p.headline) delete R.heads[p.id]; else R.heads[p.id] = b.dataset.head;
+      LS.set(R.headKey, R.heads);
+      const keep = $('#plist').scrollTop;
+      setTab('promos');
+      $('#plist').scrollTop = keep;
+    };
+  });
   $$('[data-dec]').forEach((b) => {
     b.onclick = () => {
       const R = state.results;

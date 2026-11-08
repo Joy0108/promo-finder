@@ -9,6 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import writer_check
+from .headline import CHECKS as HEADLINE_CHECKS
 from .critic import render_excerpt
 from .parse import Episode, fmt
 
@@ -28,6 +29,7 @@ def promo_record(c: dict, eps: dict[int, Episode]) -> dict:
     cut = eps[cl["ep"]].blocks[cl["cut"]]
     rec = {
         "rank": c.get("rank"), "tier": c.get("tier"), "id": c["id"],
+        "headline": (c.get("headline") or {}).get("text", ""),
         "score": c.get("final", {}).get("score"), "kind": c["kind"], "duration_s": c["duration"],
         "segments": [
             {"episode": s["ep"], "start": fmt(s["start"]), "end": fmt(s["end"]),
@@ -52,6 +54,9 @@ def promo_record(c: dict, eps: dict[int, Episode]) -> dict:
         "checks": c.get("checks"),
         "script": render_excerpt(c, eps),
     }
+    if c.get("headline"):
+        rec["headline_options"] = c["headline"]["options"]
+        rec["headline_repaired"] = c["headline"]["repaired"]
     if c.get("story"):
         rec["stitch_story"] = c["story"]
     if c.get("alternate_because"):
@@ -186,6 +191,18 @@ def quality_summary(ctx: dict, ranked: list[dict]) -> dict:
         "would_watch_next": sum(r["cold_viewer"]["would_watch_next"] for r in main), "main_list": len(main),
         "judges": run.get("judges", 1),
         "disagree": disagree, "flags": flags,
+        "headlines": headline_summary(ranked, run),
+    }
+
+
+def headline_summary(ranked: list[dict], run: dict) -> dict:
+    opts = [o for r in ranked for o in r.get("headline_options", [])]
+    return {
+        "promos": len(ranked), "with_headline": sum(1 for r in ranked if r.get("headline")),
+        "options": len(opts), "passed": sum(1 for o in opts if o.get("passed")),
+        "failed_by_check": dict(Counter(k for o in opts for k in o.get("failed", [])).most_common()),
+        "retried": sum(1 for r in ranked if r.get("headline_repaired")),
+        "checks": HEADLINE_CHECKS, "skipped": run.get("headlines_skipped", {}),
     }
 
 
@@ -208,6 +225,8 @@ def write_edl(path: Path, main: list[dict], title: str, fps: int = 30, gap: floa
     rec, event = 3600.0, 1  # record timeline starts at 01:00:00:00
     for r in main:
         lines.append(f"* PROMO #{r['rank']} {r['id']} {r['duration_s']:.1f}s | HOOK: {_ascii(r['hook']['quote'])[:70]}")
+        if r.get("headline"):
+            lines.append(f"* ON-SCREEN TEXT: {_ascii(r['headline'])[:80]}")
         lines.append(f"* CLIFFHANGER: {_ascii(r['cliffhanger']['quote'])[:80]}")
         for s in r["segments"]:
             length = s["end_s"] - s["start_s"]
@@ -226,7 +245,7 @@ def _dump(path: Path, data) -> None:
 
 
 def _write_csv(path: Path, ranked: list[dict]) -> None:
-    cols = ["rank", "tier", "id", "score", "kind", "duration_s", "segments", "hook", "cliffhanger",
+    cols = ["rank", "tier", "id", "headline", "score", "kind", "duration_s", "segments", "hook", "cliffhanger",
             "why_it_works", "hook_score", "cliffhanger_score", "standalone_score", "sells_premise"]
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=cols)
@@ -234,7 +253,8 @@ def _write_csv(path: Path, ranked: list[dict]) -> None:
         for r in ranked:
             s = r["scores"] or {}
             w.writerow({
-                "rank": r["rank"], "tier": r["tier"], "id": r["id"], "score": r["score"], "kind": r["kind"],
+                "rank": r["rank"], "tier": r["tier"], "id": r["id"], "headline": r.get("headline", ""),
+                "score": r["score"], "kind": r["kind"],
                 "duration_s": r["duration_s"],
                 "segments": " + ".join(f"E{x['episode']:03d} {x['start']}-{x['end']}" for x in r["segments"]),
                 "hook": f"[{r['hook']['type']}] {r['hook']['quote']}",
@@ -270,12 +290,12 @@ def _report_md(ctx: dict, ranked: list[dict]) -> str:
         "",
         "## Ranked promos",
         "",
-        "| # | Tier | Clip (episode start-end) | Len | Hook | Cliffhanger | Score |",
-        "|---|---|---|---|---|---|---|",
+        "| # | Tier | On-screen headline | Clip (episode start-end) | Len | Hook | Cliffhanger | Score |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in main:
         segs = " + ".join(f"E{x['episode']} {x['start']}-{x['end']}" for x in r["segments"])
-        L.append(f"| {r['rank']} | {r['tier']} | {segs} | {r['duration_s']:.0f}s | {_md(r['hook']['quote'])[:70]} | "
+        L.append(f"| {r['rank']} | {r['tier']} | {_md(r.get('headline') or '-')} | {segs} | {r['duration_s']:.0f}s | {_md(r['hook']['quote'])[:70]} | "
                  f"{_md(r['cliffhanger']['quote'])[:70]} | {r['score']} |")
 
     reasons = {p.get("promo_id"): p.get("reason", "") for p in ctx["plan"].get("why_post", [])}
@@ -295,8 +315,11 @@ def _report_md(ctx: dict, ranked: list[dict]) -> str:
         L += [
             f"### #{r['rank']} · {r['id']} · {r['tier']} · score {r['score']}",
             "",
-            "**Segments (in order):**",
         ]
+        if r.get("headline"):
+            others = [o["text"] for o in r.get("headline_options", []) if o.get("passed") and o["text"] != r["headline"]]
+            L += [f"**On-screen headline:** {_q(r['headline'])}" + (f" (also passed the checks: {', '.join(_q(t) for t in others)})" if others else ""), ""]
+        L += ["**Segments (in order):**"]
         for i, x in enumerate(r["segments"], 1):
             L.append(f"{i}. Episode {x['episode']}: {x['start']} → {x['end']} ({x['length_s']:.1f}s)")
         L += [
@@ -331,12 +354,26 @@ def _report_md(ctx: dict, ranked: list[dict]) -> str:
         ]
     if alts:
         L += ["## Alternates (valid and tested, held back for variety)", "",
-              "| # | Clip | Len | Hook | Cliffhanger | Score | Held back because |", "|---|---|---|---|---|---|---|"]
+              "| # | On-screen headline | Clip | Len | Hook | Cliffhanger | Score | Held back because |", "|---|---|---|---|---|---|---|---|"]
         for r in alts:
             segs = " + ".join(f"E{x['episode']} {x['start']}-{x['end']}" for x in r["segments"])
-            L.append(f"| {r['rank']} | {segs} | {r['duration_s']:.0f}s | {_md(r['hook']['quote'])[:60]} | "
+            L.append(f"| {r['rank']} | {_md(r.get('headline') or '-')} | {segs} | {r['duration_s']:.0f}s | {_md(r['hook']['quote'])[:60]} | "
                      f"{_md(r['cliffhanger']['quote'])[:60]} | {r['score']} | {r.get('alternate_because', '')} |")
     return "\n".join(L) + "\n"
+
+
+def _headline_md(h: dict) -> list[str]:
+    if not h["options"]:
+        why = ", ".join(f"{k} {v}" for k, v in h["skipped"].items()) or "none written"
+        return [f"- No headlines in this run ({why})."]
+    out = [
+        f"- {h['with_headline']} of {h['promos']} ranked promos have a headline that passed every check.",
+        f"- Options written: {h['options']}; passed: {h['passed']}; promos that needed a retry: {h['retried']}.",
+        "- Checks: " + "; ".join(w[0].lower() + w[1:] for w in h["checks"].values()) + ".",
+    ]
+    if h["failed_by_check"]:
+        out.append("- Options dropped, by check: " + ", ".join(f"{k} ×{v}" for k, v in h["failed_by_check"].items()))
+    return out
 
 
 def _quality_md(ctx: dict, ranked: list[dict]) -> str:
@@ -390,6 +427,10 @@ def _quality_md(ctx: dict, ranked: list[dict]) -> str:
         f"- Average: hook {a['hook']} · cliffhanger {a['cliffhanger']} · stands alone {a['standalone']} (out of 10)",
         f"- Would watch the next episode: {q['would_watch_next']}/{q['main_list']}",
         "",
+        "## On-screen headlines (AI writes, code checks)",
+        "",
+        *_headline_md(q["headlines"]),
+        "",
         "## Where the editor model and the cold viewers disagree (≥3 points)",
         "",
         "Large gaps mean one of the two judgements is wrong; these are the first clips a human should check.",
@@ -407,5 +448,6 @@ def _quality_md(ctx: dict, ranked: list[dict]) -> str:
         "- Cut points are exact to the script's timings; the edit may still need a trim of under a second.",
         "- Scores are model judgements of story strength, not measured ad performance. Real CTR and retention should tune the weights.",
         "- The cold viewers are also models, so they can share the editor model's blind spots; a human panel reduces this.",
+        "- Headlines are written by the model. Code catches length, names, clickbait and words that only appear after the cut, but not taste: an editor should still pick the line.",
     ]
     return "\n".join(L) + "\n"
